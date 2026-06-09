@@ -1,0 +1,95 @@
+=====================================================================
+NOTAS DE APRENDIZAJE - RAG VÉLEZ SÁRSFIELD
+=====================================================================
+
+=====================================================================
+MÓDULO 0 - SETUP Y PRIMER CONTACTO
+Archivo: hola_modelo.py
+=====================================================================
+
+CONCEPTOS:
+- Una API de LLM es una interfaz para enviar texto y recibir respuestas por código, a diferencia del chat web donde todo es manual
+- Cada llamada a la API consume tokens (costo + límite de contexto), por eso conviene empezar con prompts cortos
+- La API key NUNCA va en el código, se carga desde un archivo .env que está en .gitignore
+
+CÓDIGO:
+- load_dotenv() (línea 8): carga las variables del archivo .env como variables de entorno. Anthropic() busca automáticamente ANTHROPIC_API_KEY
+- client = Anthropic() (línea 10): crea el cliente que se conecta a la API de Anthropic
+- client.messages.create() (línea 12): hace la llamada a la API. Recibe el modelo, el máximo de tokens y la lista de mensajes
+- messages=[{"role": "user", "content": "..."}] (líneas 15-17): así se estructura un mensaje. "role" puede ser "user" o "assistant"
+- respuesta.content[0].text (línea 20): la respuesta viene dentro de content, que es una lista. El texto está en .text del primer elemento
+- sys.stdout.reconfigure(encoding="utf-8") (línea 6): fix para que la terminal de Windows muestre tildes y ñ correctamente
+
+ESTRUCTURA DEL PROYECTO:
+- .env: guarda la API key (nunca se sube a git)
+- .gitignore: lista archivos que git debe ignorar (.env, .venv/, __pycache__/)
+- .venv/: entorno virtual aislado para no ensuciar el Python global
+- requirements.txt: lista de dependencias (anthropic, python-dotenv)
+- corpus/: carpeta vacía donde van a vivir los documentos de Vélez (Módulo 3)
+
+=====================================================================
+MÓDULO 1 - CHATBOT CON HISTORIAL Y MANEJO DE ERRORES
+Archivo: chatbot.py
+=====================================================================
+
+CONCEPTOS:
+- El modelo NO recuerda nada entre llamadas. Cada llamada a la API es independiente
+- Para que "recuerde", vos le mandás toda la conversación anterior en la lista messages
+- El historial es una lista de diccionarios con role ("user" o "assistant") y content
+- El system message define la personalidad/rol del asistente. Va separado del historial, en el parámetro system=
+- Las APIs fallan: rate limit, desconexión, errores de autenticación. Sin try/except el script se cae
+
+CÓDIGO:
+- SYSTEM_MESSAGE (línea 11): define quién es el asistente. Esto va en el parámetro system= de la llamada, NO dentro de messages
+- def preguntar(mensaje, historial) (línea 18): función reutilizable que encapsula toda la lógica de una llamada
+- historial.append({"role": "user", ...}) (línea 19): agrega tu pregunta al historial ANTES de llamar a la API
+- messages=historial (línea 26): envía TODA la conversación acumulada. Por eso el modelo "recuerda"
+- historial.append({"role": "assistant", ...}) (línea 29): agrega la respuesta al historial para el siguiente turno
+- return texto, historial (línea 30): devuelve ambos para que el bucle principal los use
+- except RateLimitError (línea 32): si la API dice "demasiadas peticiones", espera 5 seg y reintenta
+- historial.pop() (línea 33): si falla, saca el mensaje que agregamos para no contaminar el historial con intentos fallidos
+- except APIConnectionError (línea 38): si no hay conexión, avisa sin crashear
+- except APIStatusError (línea 42): cualquier otro error de la API (auth, servidor, etc.)
+- while True + input() (líneas 52-53): bucle infinito que lee tu input hasta que escribís "salir"
+- if __name__ == "__main__" (línea 64): hace que main() solo se ejecute si corrés el archivo directamente
+
+=====================================================================
+MÓDULO 2 - PROMPTING
+Archivo: prompting_ejercicios.py
+=====================================================================
+
+CONCEPTOS:
+- Prompt vago vs. específico: un prompt ambiguo da respuestas genéricas o equivocadas. Ser específico en la tarea y el formato mejora la respuesta drásticamente
+- Zero-shot: pedirle algo al modelo sin dar ejemplos. Funciona, pero no controlás el formato
+- Few-shot: darle ejemplos del formato esperado antes de la tarea. El modelo imita el patrón
+- Chain-of-thought: pedirle al modelo que razone paso a paso ("pensá paso a paso"). Útil para cálculos y razonamientos complejos
+
+CÓDIGO:
+- PARRAFO_VELEZ (línea 11): texto de ejemplo sobre Vélez, usado como contexto en todos los ejercicios
+- def llamar(prompt, etiqueta) (línea 24): función auxiliar que envía un prompt y muestra la respuesta con una etiqueta descriptiva
+- Prompt vago (línea 44): "Contame de Vélez" - el modelo no sabe si hablás del club, de una persona, etc.
+- Prompt específico (líneas 48-52): le das el texto, le decís la tarea exacta y el formato (lista). Resultado mucho mejor
+- Zero-shot (líneas 60-63): pide formato "AÑO - EVENTO" pero no da ejemplos. El modelo elige su propia forma de presentarlo
+- Few-shot (líneas 66-73): da 2 ejemplos del formato antes de la tarea. El modelo replica ese formato exacto
+- Chain-of-thought (líneas 87-91): agrega "Pensá paso a paso" al prompt. El modelo muestra su razonamiento
+
+=====================================================================
+MÓDULO 2 - PROMPT-PLANTILLA DEL RAG
+Archivo: prompt_plantilla.py
+=====================================================================
+
+CONCEPTOS:
+- El prompt-plantilla del RAG es la pieza clave que evita alucinaciones
+- La instrucción "respondé SOLO con el contexto" obliga al modelo a no inventar
+- La instrucción "si no está, decí que no sabés" es lo que hace confiable al RAG
+- Siempre hay que probar con 3 tipos de pregunta: una que SÍ está, una que NO está, y una tramposa
+
+CÓDIGO:
+- PROMPT_RAG (línea 10): la plantilla que se va a reutilizar en el RAG del Módulo 4. Tiene dos placeholders: {contexto} y {pregunta}
+- "usando SOLO la siguiente información" (línea 10): esta instrucción restringe al modelo a responder solo con lo que le das
+- "Si la respuesta no está en el contexto, decí que no sabés" (línea 11): evita que el modelo invente cuando no tiene la info
+- "No inventes datos. Citá el contexto" (línea 12): refuerzo doble contra alucinaciones
+- PROMPT_RAG.format(contexto=..., pregunta=...) (línea 28): así se inyectan los valores reales en la plantilla
+- Test 1 (línea 42): pregunta con respuesta en el contexto -> debe responder correctamente citando
+- Test 2 (línea 49): pregunta sin respuesta en el contexto -> debe decir "no tengo información"
+- Test 3 (línea 56): pregunta con dato falso -> debe corregir usando el contexto real
