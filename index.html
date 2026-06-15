@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<!--
+  Módulo 6d: interfaz de chat del RAG.
+
+  Es una sola página, sin frameworks. La lógica clave:
+    1. Guarda el historial de la conversación en un array (var `historial`).
+    2. En cada pregunta llama a POST /chat enviando texto + historial.
+    3. Lee la respuesta en STREAMING y la va pintando token a token.
+    4. Al terminar, agrega el turno (user + assistant) al historial.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Vélez Sársfield</title>
+  <style>
+    :root { --azul: #0a2a6b; --gris: #f0f2f5; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0; background: var(--gris); color: #1a1a1a;
+      display: flex; flex-direction: column; height: 100vh;
+    }
+    header {
+      background: var(--azul); color: #fff; padding: 14px 20px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    header .v { font-size: 28px; font-weight: 800; }
+    header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+    header .opt { margin-left: auto; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    #chat {
+      flex: 1; overflow-y: auto; padding: 20px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .msg { max-width: 75%; padding: 10px 14px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; }
+    .user { align-self: flex-end; background: var(--azul); color: #fff; border-bottom-right-radius: 4px; }
+    .bot { align-self: flex-start; background: #fff; border: 1px solid #ddd; border-bottom-left-radius: 4px; }
+    .vacio { color: #888; text-align: center; margin-top: 40px; }
+    form { display: flex; gap: 8px; padding: 14px; background: #fff; border-top: 1px solid #ddd; }
+    #texto { flex: 1; padding: 12px; border: 1px solid #ccc; border-radius: 10px; font-size: 15px; }
+    button { background: var(--azul); color: #fff; border: 0; padding: 0 20px; border-radius: 10px; font-size: 15px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="v">V</span>
+    <h1>Asistente de la historia de Vélez Sársfield</h1>
+    <label class="opt"><input type="checkbox" id="rerank"> re-ranking</label>
+  </header>
+
+  <div id="chat">
+    <div class="vacio" id="vacio">Preguntá algo sobre la historia de Vélez. Ej: "¿Quién fue José Amalfitani?"</div>
+  </div>
+
+  <form id="form">
+    <input id="texto" placeholder="Escribí tu pregunta..." autocomplete="off" autofocus>
+    <button id="enviar" type="submit">Preguntar</button>
+  </form>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const form = document.getElementById("form");
+    const input = document.getElementById("texto");
+    const boton = document.getElementById("enviar");
+    const vacio = document.getElementById("vacio");
+
+    // El historial de la conversación: lo mandamos en cada request (HTTP no tiene memoria)
+    let historial = [];
+
+    function burbuja(clase, texto) {
+      if (vacio) vacio.remove();
+      const div = document.createElement("div");
+      div.className = "msg " + clase;
+      div.textContent = texto;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const texto = input.value.trim();
+      if (!texto) return;
+
+      burbuja("user", texto);
+      input.value = "";
+      boton.disabled = true;
+
+      const div = burbuja("bot", "…");
+      let respuesta = "";
+
+      try {
+        const resp = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            texto: texto,
+            historial: historial,
+            rerank: document.getElementById("rerank").checked,
+          }),
+        });
+
+        // Leemos la respuesta en streaming: cada chunk que llega lo agregamos
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        div.textContent = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          respuesta += decoder.decode(value, { stream: true });
+          div.textContent = respuesta;
+          chat.scrollTop = chat.scrollHeight;
+        }
+      } catch (err) {
+        div.textContent = "Error al conectar con la API: " + err.message;
+      }
+
+      // Guardamos el turno en el historial para que el modelo recuerde
+      historial.push({ role: "user", content: texto });
+      historial.push({ role: "assistant", content: respuesta });
+
+      boton.disabled = false;
+      input.focus();
+    });
+  </script>
+</body>
+</html>

@@ -20,7 +20,7 @@ def preguntar(mensaje, historial):
 
     try:
         respuesta = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=512,
             system=SYSTEM_MESSAGE,
             messages=historial,

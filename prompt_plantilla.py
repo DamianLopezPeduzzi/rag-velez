@@ -28,7 +28,7 @@ def preguntar_rag(pregunta, contexto):
     prompt = PROMPT_RAG.format(contexto=contexto, pregunta=pregunta)
 
     respuesta = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=512,
         messages=[{"role": "user", "content": prompt}],
     )

@@ -1,2 +1,11 @@
 anthropic
 python-dotenv
+requests
+chromadb
+scipy
+langchain
+langchain-anthropic
+langchain-chroma
+langchain-text-splitters
+fastapi
+uvicorn

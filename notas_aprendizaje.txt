@@ -93,3 +93,138 @@ CÓDIGO:
 - Test 1 (línea 42): pregunta con respuesta en el contexto -> debe responder correctamente citando
 - Test 2 (línea 49): pregunta sin respuesta en el contexto -> debe decir "no tengo información"
 - Test 3 (línea 56): pregunta con dato falso -> debe corregir usando el contexto real
+
+=====================================================================
+MÓDULO 3 - CORPUS Y EMBEDDINGS
+Archivos: descargar_corpus.py, similitud_coseno.py, cargar_chroma.py
+=====================================================================
+
+CONCEPTOS:
+- Corpus: colección de textos crudos que van a ser la base de conocimiento del RAG
+- Embedding: representación numérica de un texto como vector de 384 dimensiones. Textos similares en significado tienen vectores cercanos en el espacio vectorial
+- Cosine similarity: medida de similitud entre dos vectores. Va de 0 a 1 (1 = idénticos, 0 = sin relación). Se calcula como 1 - cosine_distance
+- Chunking: partir el corpus en fragmentos manejables (~1000 chars). Necesario porque el retrieval trabaja mejor con piezas específicas que con documentos enteros
+- Solapamiento (overlap): los chunks se solapan ~200 chars entre sí para no cortar ideas a mitad de párrafo
+
+CÓDIGO (descargar_corpus.py):
+- HEADERS = {"User-Agent": "..."} (línea 16): Wikipedia rechaza con 403 si no te identificás. El User-Agent es obligatorio
+- requests.get(API_URL, params=params, headers=HEADERS) (línea 42): la API de Wikipedia necesita action=query, prop=extracts, explaintext=1 para devolver texto plano
+- SECCIONES_BASURA (líneas 26-30): lista de secciones que no aportan al RAG (Referencias, Véase también, etc.)
+- re.sub(patron, "", texto, flags=re.DOTALL) (línea 55): elimina todo desde una sección basura hasta el final del texto
+- re.sub(r"=+\s*(.*?)\s*=+", r"\1", texto) (línea 58): los títulos de Wikipedia vienen como "== Título ==" — esto los limpia a solo "Título"
+- Resultado: 4 archivos en corpus/, ~252K caracteres totales
+
+CÓDIGO (similitud_coseno.py):
+- DefaultEmbeddingFunction() (línea 19): usa el modelo all-MiniLM-L6-v2 de Sentence Transformers. Genera vectores de 384 dimensiones
+- scipy.spatial.distance.cosine() (línea 17): devuelve distancia (0=iguales). similitud = 1 - distancia
+- Resultado medido: frases similares -> 0.71, frases sin relación -> 0.51
+
+CÓDIGO (cargar_chroma.py):
+- chromadb.PersistentClient(path="chroma_db") (línea 14): crea/abre la base vectorial en disco. Los datos sobreviven entre corridas
+- get_or_create_collection("velez") (línea 15): crea la colección si no existe, o la abre si ya existe
+- partir_en_chunks(texto, tamano=1000, solapamiento=200) (línea 19): agrupa párrafos hasta ~1000 chars, luego el siguiente chunk retrocede 200 chars para no perder contexto en los bordes
+- coleccion.add(documents=chunks, metadatas=..., ids=...) (línea 55): carga los chunks con metadatos (fuente) e IDs únicos
+- Resultado: 222 chunks totales (18 estadio, 137 historia, 10 palmarés, 57 principal)
+
+=====================================================================
+MÓDULO 4 - RAG MANUAL Y CON LANGCHAIN
+Archivos: rag.py, rag_langchain.py
+=====================================================================
+
+CONCEPTOS:
+- RAG (Retrieval-Augmented Generation): en vez de mandar toda la base de conocimiento al modelo (caro e imposible), primero recuperás los chunks más relevantes para la pregunta y solo esos van al prompt
+- Retrieval: convertir la pregunta en embedding y buscar los K chunks más similares en ChromaDB
+- Generación aumentada: el prompt incluye esos chunks como contexto + la restricción de responder solo con ellos
+- LCEL (LangChain Expression Language): sintaxis de LangChain con el operador | para encadenar pasos. Cada | pasa la salida del paso anterior al siguiente
+- Retriever: abstracción de LangChain que encapsula el paso de búsqueda vectorial
+
+CÓDIGO (rag.py):
+- coleccion.query(query_texts=[pregunta], n_results=k) (línea 39): ChromaDB convierte la pregunta en embedding internamente y devuelve los K chunks más cercanos
+- resultado["documents"][0] (línea 40): los documentos recuperados son una lista de listas (una por query). [0] es la primera (y única) query
+- "\n\n---\n\n".join(chunks) (línea 46): los chunks se concatenan con separadores visibles para que el modelo los distinga
+- PROMPT_RAG.format(contexto=..., pregunta=...) (línea 47): inyecta los chunks recuperados y la pregunta en la plantilla del Módulo 2
+- preguntar_rag(pregunta, mostrar_fuentes=True) (línea 57): función principal que encadena los 3 pasos: recuperar -> generar -> (opcional) mostrar fuentes
+
+CÓDIGO (rag_langchain.py):
+- class EmbeddingsChroma (línea 29): adaptador necesario porque LangChain espera su propia interfaz de embeddings. Envuelve DefaultEmbeddingFunction de ChromaDB
+- [float(x) for x in v] (líneas 34 y 37): conversión explícita de np.float32 a float nativo. Sin esto ChromaDB rechaza los vectores con ValueError
+- Chroma(collection_name="velez", persist_directory="chroma_db", ...) (línea 41): se conecta a la MISMA base que cargó cargar_chroma.py
+- vectorstore.as_retriever(search_kwargs={"k": 3}) (línea 48): equivalente a nuestra función recuperar_contexto()
+- ChatAnthropic(model="claude-sonnet-4-6", max_tokens=512) (línea 63): equivalente a client.messages.create()
+- chain = ({"contexto": retriever | formatear_docs, "pregunta": RunnablePassthrough()} | prompt | llm | StrOutputParser()) (líneas 71-76): la cadena LCEL. El | conecta: retrieval -> formato -> prompt -> modelo -> texto plano
+- chain.invoke(p) (línea 86): ejecuta toda la cadena en un solo llamado
+
+=====================================================================
+MÓDULO 5 - EVALUACIÓN Y API
+Archivos: evaluacion.py, api.py
+=====================================================================
+
+CONCEPTOS:
+- LLM-as-judge: usar al propio modelo como evaluador automático. Le pasás pregunta + respuesta esperada + respuesta del sistema y le preguntás si es correcta
+- Evaluación diagnóstica: cuando falla, separar si es problema de RETRIEVAL (trajo chunks equivocados) o de GENERACIÓN (tenía el contexto pero respondió mal)
+- REST API: protocolo estándar para exponer funcionalidades por HTTP. Permite que cualquier app (web, mobile, otro servicio) consulte el RAG sin conocer su implementación
+- FastAPI: framework Python que genera automáticamente documentación interactiva en /docs y valida tipos de entrada/salida con Pydantic
+
+CÓDIGO (evaluacion.py):
+- SET_EVALUACION (líneas 23-33): 10 pares (pregunta, dato esperado). El "dato esperado" es un string que DEBE aparecer en la respuesta correcta
+- PROMPT_JUEZ (líneas 35-41): prompt para Claude-como-juez. Responde solo "CORRECTA" o "INCORRECTA". max_tokens=10 porque la respuesta es siempre una palabra
+- "CORRECTA" in r.content[0].text.upper() (línea 56): chequeo flexible: acepta "CORRECTA", "correcta", "Correcta"
+- chunks, fuentes = recuperar_contexto(pregunta) (línea 85): si falla, muestra los chunks que trajo para diagnosticar si el error es de retrieval o generación
+- Resultado obtenido: 10/10 correctas
+
+CÓDIGO (api.py):
+- from rag import preguntar_rag (línea 4): reutiliza toda la lógica del Módulo 4 sin copiar código
+- class Pregunta(BaseModel) / class Respuesta(BaseModel) (líneas 23-29): Pydantic valida automáticamente los tipos. Si mandás un int donde va un str, devuelve 422
+- @app.get("/") (línea 32): endpoint de health check. Confirma que la API está viva
+- @app.post("/preguntar", response_model=Respuesta) (línea 37): el endpoint principal. POST porque enviás datos en el body
+- Para levantar: .venv/Scripts/uvicorn api:app --reload
+- Para probar: http://localhost:8000/docs (interfaz interactiva automática de FastAPI)
+
+=====================================================================
+MÓDULO 6 - STREAMING, HISTORIAL, RE-RANKING Y UI WEB
+Archivos: rag.py (extendido), reranking.py, api.py (extendido), index.html
+=====================================================================
+
+CONCEPTOS:
+- Streaming: en vez de esperar toda la respuesta, el modelo emite tokens de a uno. Mejora la experiencia (la respuesta "aparece escribiéndose"). En Python es un GENERADOR: la función hace "yield trozo" muchas veces en vez de "return texto"
+- Historial en una API stateless: HTTP no tiene memoria entre requests. Para que el chat "recuerde", el cliente (browser) guarda el historial y lo manda en CADA pedido. El server no guarda nada
+- Re-ranking: el retrieval vectorial trae los chunks "más cercanos" en embeddings, pero cercano != más útil. Un segundo paso re-ordena esos chunks por relevancia real antes de mandarlos al modelo. Acá lo hacemos con Claude como re-ranker (LLM-as-reranker)
+- StreamingResponse de FastAPI: envuelve un generador y manda cada trozo al browser apenas se produce, sin esperar el final
+- Servir HTML desde FastAPI: FileResponse("index.html") devuelve la página de chat en la ruta GET /
+
+CÓDIGO (rag.py - lo nuevo del Módulo 6):
+- rerankear(pregunta, chunks, fuentes, top) (línea 50): arma una lista numerada de fragmentos, le pide a Claude que devuelva los índices de los más útiles (ej "2,0,5"), y re-ordena chunks y fuentes según eso
+- re.findall(r"\d+", r.content[0].text) (línea 67): extrae los números que devolvió el re-ranker. El fallback (línea 75) protege si el modelo devuelve algo raro
+- recuperar_contexto(pregunta, k, rerank=False) (línea 80): si rerank=True, recupera el DOBLE de chunks (k*2) y los filtra con rerankear() hasta los k mejores. El default rerank=False mantiene compatibilidad con evaluacion.py
+- _armar_mensajes(pregunta, chunks, historial) (línea 96): arma la lista de mensajes = historial previo (texto plano) + turno actual con el contexto inyectado. El historial NO lleva contextos para no crecer de más
+- generar_respuesta_stream() (línea 119): usa client.messages.stream() en lugar de create(). El "with ... as stream" + "for trozo in stream.text_stream: yield trozo" es lo que convierte la función en un generador de tokens
+- preguntar_rag_stream(pregunta, historial, rerank) (línea 145): el flujo RAG completo en modo streaming. "yield from" reenvía cada trozo del generador interno
+
+CÓDIGO (reranking.py):
+- Script de demostración: compara para una misma pregunta los chunks SIN re-ranking vs CON re-ranking, para ver el efecto con los ojos
+- recuperar_contexto(pregunta, rerank=False) vs rerank=True (líneas 33 y 37): la única diferencia entre las dos llamadas
+
+CÓDIGO (api.py - lo nuevo del Módulo 6):
+- class Turno / class MensajeChat (líneas 33-43): Pydantic valida que el historial sea una lista de {role, content}. rerank es un bool opcional
+- @app.get("/") -> FileResponse("index.html") (línea 50): ahora la raíz sirve la interfaz de chat, no un JSON
+- @app.post("/chat") (línea 65): recibe texto + historial + rerank, y devuelve StreamingResponse(generador). Los tokens viajan al browser en vivo
+- [t.model_dump() for t in mensaje.historial] (línea 73): convierte los objetos Pydantic de vuelta a diccionarios {role, content} que la API de Anthropic entiende
+
+CÓDIGO (index.html):
+- let historial = [] (script): el array que guarda toda la conversación. Se manda en cada fetch porque HTTP no recuerda
+- fetch("/chat", {method:"POST", body: JSON.stringify({texto, historial, rerank})}): el pedido al server
+- resp.body.getReader() + decoder.decode(value) (bucle while): lee la respuesta en streaming y va pintando cada trozo en la burbuja del bot
+- historial.push({role:"user"...}) + push({role:"assistant"...}): al terminar, guarda el turno para que el próximo pedido lleve el contexto
+
+PROBADO:
+- Streaming + historial: pregunta "¿Quién fue Amalfitani?" y seguimiento "¿En qué años fue presidente?" -> el seguimiento entendió de quién se hablaba gracias al historial
+- Re-ranking: en "¿de qué color es la camiseta?" sacó un chunk irrelevante (sobre el presidente actual) y trajo otro sobre los colores
+- API: GET / sirve el HTML, POST /chat responde en streaming con UTF-8 correcto
+
+GOTCHAS / ERRORES COMUNES:
+- Streaming necesita StreamingResponse + un generador. Si devolvés todo junto con return, no hay streaming
+- Historial ilimitado: igual que en el Módulo 1, el historial crece y eventualmente supera el límite de tokens. Hay que recortarlo o resumirlo
+- Re-ranking con LLM agrega una llamada extra (más latencia y costo): por eso es opcional (rerank=False por default). Medí si realmente mejora antes de dejarlo siempre activo
+- El retrieval de un seguimiento usa solo el texto de la pregunta actual ("¿y en qué año fue eso?"): el historial ayuda a la GENERACIÓN, no al retrieval. Para mejorar eso habría que reformular la query con el historial (mejora futura)
+- CORS: si el HTML corriera en otro puerto que la API, el browser bloquearía el fetch. Acá no pasa porque FastAPI sirve el HTML y la API desde el mismo origen
+- El linter del IDE puede marcar "Cannot find module fastapi": es un falso positivo si apunta al Python global en vez de al .venv. En runtime funciona

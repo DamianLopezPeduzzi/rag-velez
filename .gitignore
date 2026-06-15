@@ -2,3 +2,6 @@
 .env
 __pycache__/
 *.pyc
+
+# Base vectorial: artefacto regenerable con `python cargar_chroma.py`
+chroma_db/
