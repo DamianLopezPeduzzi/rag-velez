@@ -278,3 +278,35 @@ ORDEN DE LAS 3 PALANCAS DE CALIDAD (de retrieval a generación):
 1. reformular_query  -> mejora QUÉ se busca (acerca el embedding al chunk correcto)
 2. rerankear         -> mejora el ORDEN de lo que se encontró (filtra los mejores)
 3. prompt + historial -> mejora CÓMO se responde con lo que llegó
+
+=====================================================================
+MÓDULO 6f - REGLAS DE DOMINIO EN EL PROMPT (caso "cuántos títulos = 19")
+Archivo: rag.py (PROMPT_RAG)
+=====================================================================
+
+EL PROBLEMA:
+- "cuántos títulos tiene Vélez" devolvía 16 (o 11), pero la respuesta esperada es 19
+- 19 = 11 Primera División + 3 copas nacionales + 5 internacionales (cuenta oficial de fútbol)
+- El corpus NO está desactualizado (incluye el título 2024 y la Supercopa de sept-2025)
+- El corpus tiene VARIOS números de "títulos" según el criterio: 11 (Primera), 19 (oficiales fútbol),
+  20 (sumando básquet y vóley), 16 (locales desde 1931), 49 (inferiores)
+
+POR QUÉ FALLABA Y CÓMO SE ARREGLÓ (dos capas):
+- RETRIEVAL: sin reformular, el chunk del palmarés ni entraba -> respondía con un encuadre suelto.
+  Con reformular_query activo, sí trae el palmarés con el desglose 11+3+5
+- GENERACIÓN: aun con el chunk correcto, Claude tomaba un número suelto ("11 de Primera") en vez del total.
+  Se agregaron reglas de dominio al PROMPT_RAG:
+    1) asumir fútbol profesional salvo que el usuario aclare otra cosa
+    2) si piden un total y el contexto desglosa categorías, SUMARLAS y dar el total con su desglose
+    3) no mezclar otros deportes ni inferiores salvo que lo pidan
+
+LECCIÓN:
+- Una pregunta de "sentido común" para una persona ("cuántos títulos") necesita reglas EXPLÍCITAS en el
+  prompt: el LLM no asume el dominio ni decide sumar por su cuenta sobre el contexto
+- Hizo falta arreglar las DOS capas: reformulación (traer el chunk) + prompt (interpretar y sumar)
+- Por eso en el chat la reformulación quedó PRENDIDA por default: para que la pregunta simple
+  funcione de fábrica. Se puede desactivar para comparar el antes/después
+
+PROBADO:
+- SIN reformular: "No tengo información suficiente" (el palmarés no llega)
+- CON reformular + prompt nuevo: "19 títulos en fútbol profesional (14 nacionales + 5 internacionales)"

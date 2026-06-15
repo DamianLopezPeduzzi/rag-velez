@@ -25,10 +25,15 @@ client = Anthropic()
 MODELO = "claude-sonnet-4-6"
 K_CHUNKS = 3  # cuántos chunks usar finalmente en el prompt
 
-# El prompt-plantilla del Módulo 2: obliga a responder solo con el contexto
+# El prompt-plantilla del Módulo 2 (+ reglas de dominio del Módulo 6):
+# obliga a responder solo con el contexto y resuelve ambigüedades por defecto.
 PROMPT_RAG = """Respondé la pregunta del usuario usando SOLO la siguiente información de contexto.
-Si la respuesta no está en el contexto, decí "No tengo información suficiente para responder eso."
-No inventes datos. Citá el contexto cuando sea posible.
+
+Reglas:
+- Asumí que las preguntas se refieren al fútbol profesional del club, salvo que el usuario aclare otra cosa (básquet, vóley, inferiores, etc.).
+- Si preguntan por una cantidad total (por ejemplo, cuántos títulos) y el contexto desglosa categorías (Primera División, copas nacionales, copas internacionales), sumá esas categorías y dá el total oficial, mostrando el desglose. No mezcles otros deportes ni divisiones inferiores salvo que lo pidan.
+- Si la respuesta no está en el contexto, decí "No tengo información suficiente para responder eso."
+- No inventes datos. Citá el contexto cuando sea posible.
 
 Contexto:
 {contexto}
