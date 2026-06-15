@@ -46,6 +46,7 @@
   <header>
     <span class="v">V</span>
     <h1>Asistente de la historia de Vélez Sársfield</h1>
+    <label class="opt"><input type="checkbox" id="reformular"> reformular query</label>
     <label class="opt"><input type="checkbox" id="rerank"> re-ranking</label>
   </header>
 
@@ -98,6 +99,7 @@
             texto: texto,
             historial: historial,
             rerank: document.getElementById("rerank").checked,
+            reformular: document.getElementById("reformular").checked,
           }),
         });
 

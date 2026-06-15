@@ -45,6 +45,18 @@ PREGUNTA: {pregunta}
 FRAGMENTOS:
 {fragmentos}"""
 
+# Prompt de reformulación: reescribe la pregunta como una consulta de búsqueda rica.
+# Esto opera ANTES del retrieval, para acercar el embedding al chunk correcto.
+PROMPT_REFORMULAR = """Reescribí la pregunta del usuario como una consulta de búsqueda rica
+en palabras clave y sinónimos, para buscar en documentos sobre la historia del Club Atlético
+Vélez Sársfield. Si hay conversación previa, usala para resolver referencias ("eso", "ahí").
+Devolvé SOLO la consulta reescrita, en una línea, sin explicaciones ni comillas.
+
+Conversación previa:
+{historial}
+
+Pregunta del usuario: {pregunta}"""
+
 # Conexión a la base vectorial cargada por cargar_chroma.py
 coleccion = chromadb.PersistentClient(path="chroma_db").get_collection("velez")
 
@@ -76,6 +88,29 @@ def rerankear(pregunta, chunks, fuentes, top=K_CHUNKS):
     chunks_ord = [chunks[i] for i in elegidos]
     fuentes_ord = [fuentes[i] for i in elegidos]
     return chunks_ord, fuentes_ord
+
+
+def reformular_query(pregunta, historial=None):
+    """Módulo 6e: reescribe la pregunta del usuario como una consulta de búsqueda rica.
+
+    Opera ANTES del retrieval. Resuelve el problema de los sinónimos: "¿cuántos
+    títulos?" se expande a "palmarés campeonatos Primera División copas...", lo que
+    acerca el embedding de la búsqueda al chunk correcto. Si hay historial, también
+    resuelve referencias de seguimiento ("¿y en qué año fue eso?").
+    """
+    if historial:
+        ultimos = historial[-4:]  # últimos ~2 turnos, recortados
+        previa = "\n".join(f"{m['role']}: {m['content'][:200]}" for m in ultimos)
+    else:
+        previa = "(sin conversación previa)"
+
+    prompt = PROMPT_REFORMULAR.format(historial=previa, pregunta=pregunta)
+    r = client.messages.create(
+        model=MODELO,
+        max_tokens=80,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return r.content[0].text.strip()
 
 
 def recuperar_contexto(pregunta, k=K_CHUNKS, rerank=False):
@@ -133,18 +168,24 @@ def generar_respuesta_stream(pregunta, chunks, historial=None):
             yield trozo
 
 
-def preguntar_rag(pregunta, mostrar_fuentes=True, historial=None, rerank=False):
-    """El flujo RAG completo para una pregunta (respuesta de una sola vez)."""
-    chunks, fuentes = recuperar_contexto(pregunta, rerank=rerank)
+def preguntar_rag(pregunta, mostrar_fuentes=True, historial=None, rerank=False, reformular=False):
+    """El flujo RAG completo para una pregunta (respuesta de una sola vez).
+
+    Ojo: la BÚSQUEDA usa la query (reformulada o no), pero la GENERACIÓN siempre
+    usa la pregunta original del usuario, así Claude responde lo que realmente preguntó.
+    """
+    query = reformular_query(pregunta, historial) if reformular else pregunta
+    chunks, fuentes = recuperar_contexto(query, rerank=rerank)
     respuesta = generar_respuesta(pregunta, chunks, historial)
     if mostrar_fuentes:
         respuesta += f"\n  (fuentes: {', '.join(set(fuentes))})"
     return respuesta
 
 
-def preguntar_rag_stream(pregunta, historial=None, rerank=False):
+def preguntar_rag_stream(pregunta, historial=None, rerank=False, reformular=False):
     """Módulo 6: flujo RAG completo en modo streaming, con historial opcional."""
-    chunks, _ = recuperar_contexto(pregunta, rerank=rerank)
+    query = reformular_query(pregunta, historial) if reformular else pregunta
+    chunks, _ = recuperar_contexto(query, rerank=rerank)
     yield from generar_respuesta_stream(pregunta, chunks, historial)
 
 

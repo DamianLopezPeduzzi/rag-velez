@@ -44,6 +44,7 @@ class MensajeChat(BaseModel):
     texto: str
     historial: list[Turno] = []   # turnos previos de la conversación
     rerank: bool = False          # activar el re-ranking del Módulo 6c
+    reformular: bool = False      # activar la reformulación de query (Módulo 6e)
 
 
 # ---- Endpoints ----
@@ -70,6 +71,9 @@ def chat(mensaje: MensajeChat):
     """
     historial = [t.model_dump() for t in mensaje.historial]
     generador = preguntar_rag_stream(
-        mensaje.texto, historial=historial, rerank=mensaje.rerank
+        mensaje.texto,
+        historial=historial,
+        rerank=mensaje.rerank,
+        reformular=mensaje.reformular,
     )
     return StreamingResponse(generador, media_type="text/plain; charset=utf-8")

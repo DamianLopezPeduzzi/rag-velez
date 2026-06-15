@@ -228,3 +228,53 @@ GOTCHAS / ERRORES COMUNES:
 - El retrieval de un seguimiento usa solo el texto de la pregunta actual ("¿y en qué año fue eso?"): el historial ayuda a la GENERACIÓN, no al retrieval. Para mejorar eso habría que reformular la query con el historial (mejora futura)
 - CORS: si el HTML corriera en otro puerto que la API, el browser bloquearía el fetch. Acá no pasa porque FastAPI sirve el HTML y la API desde el mismo origen
 - El linter del IDE puede marcar "Cannot find module fastapi": es un falso positivo si apunta al Python global en vez de al .venv. En runtime funciona
+
+=====================================================================
+MÓDULO 6e - REFORMULACIÓN DE QUERY (caso real de debugging de retrieval)
+Archivo: rag.py (reformular_query)
+=====================================================================
+
+EL PROBLEMA QUE LO MOTIVÓ:
+- La pregunta "Cuanto titulos tiene velez" devolvía "No tengo información suficiente"
+- Pero el dato SÍ estaba en el corpus (velez_palmares.txt: "11 títulos de Primera División...")
+- Diagnóstico: era problema de RETRIEVAL, no de corpus ni de generación
+- El chunk del palmarés quedaba en la POSICIÓN #39 de 222 para esa pregunta -> nunca entraba en los k=3
+
+LA LECCIÓN CLAVE (las dos etapas del RAG):
+- ETAPA 1 RETRIEVAL: pregunta -> embedding -> búsqueda en ChromaDB -> trae k chunks. NO interviene Claude
+- ETAPA 2 GENERACIÓN: esos chunks + pregunta -> prompt -> Claude responde
+- El prompt (Etapa 2) SOLO puede usar lo que el retrieval (Etapa 1) ya trajo
+- Por eso "decirle en el prompt que títulos = campeonatos" NO sirve: el dato nunca llega a Claude
+- El sinónimo hay que aplicarlo ANTES de buscar, en la Etapa 1 -> eso es la reformulación de query
+
+LA SENSIBILIDAD AL FRASEO (medido con el mismo chunk de palmarés):
+- "Cuanto titulos tiene velez"                          -> palmarés en posición #39 ❌
+- "cuantos campeonatos ganó Vélez"                       -> posición #1 ✅
+- "palmarés títulos de Primera División y copas"         -> posición #1 ✅
+- Conclusión: la búsqueda semántica es MUY sensible a las palabras exactas. "campeonatos" matchea
+  el palmarés mucho mejor que "títulos", aunque para una persona signifiquen lo mismo
+
+CONCEPTOS:
+- Query reformulation / query expansion: usar el LLM para reescribir la pregunta del usuario en una
+  consulta de búsqueda más rica (con sinónimos y palabras clave) ANTES del retrieval
+- Separar query de pregunta: se BUSCA con la query reformulada, pero se GENERA con la pregunta original
+  (así Claude responde lo que el usuario realmente preguntó, no la versión expandida)
+- Por qué el re-ranking no alcanzaba acá: el re-ranking solo reordena los candidatos que el retrieval
+  ya trajo. Si el chunk correcto no entró en el pool, no hay nada que rescatar
+
+CÓDIGO (rag.py):
+- PROMPT_REFORMULAR: le pide a Claude reescribir la pregunta como consulta de búsqueda; si hay
+  historial, también resuelve referencias de seguimiento ("¿y en qué año fue eso?")
+- reformular_query(pregunta, historial): hace la llamada (max_tokens chico, 80) y devuelve la query reescrita
+- preguntar_rag / preguntar_rag_stream con reformular=False: si True, busca con reformular_query() y genera
+  con la pregunta original. recuperar_contexto NO cambió (sigue recibiendo el texto de búsqueda que le pasen)
+
+PROBADO (antes/después, misma pregunta "Cuanto titulos tiene velez"):
+- reformulada -> "títulos campeonatos trofeos Vélez Sársfield cantidad total copas obtenidas logros deportivos palmares historia"
+- SIN reformular: fuentes = [historia, historia, principal] -> "No tengo información"
+- CON reformular: fuentes = [palmarés, palmarés, historia] -> "11 títulos de Primera División" ✅
+
+ORDEN DE LAS 3 PALANCAS DE CALIDAD (de retrieval a generación):
+1. reformular_query  -> mejora QUÉ se busca (acerca el embedding al chunk correcto)
+2. rerankear         -> mejora el ORDEN de lo que se encontró (filtra los mejores)
+3. prompt + historial -> mejora CÓMO se responde con lo que llegó
