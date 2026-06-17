@@ -1,0 +1,19 @@
+# Lo que NO debe entrar a la imagen Docker.
+
+# Secreto: la API key jamás se mete en la imagen (va como variable de entorno)
+.env
+
+# Entorno virtual local (es de Windows y pesa mucho)
+.venv/
+
+# Base vectorial: se reconstruye dentro de la imagen con cargar_chroma.py
+chroma_db/
+
+# Basura de Python y git
+__pycache__/
+*.pyc
+.git/
+.gitignore
+
+# Material de aprendizaje, no hace falta en producción
+notas_aprendizaje.txt

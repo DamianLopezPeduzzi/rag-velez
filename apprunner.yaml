@@ -1,0 +1,18 @@
+# Configuración para deploy en AWS App Runner SIN Docker (modo "source/repositorio").
+# App Runner clona tu repo de GitHub, corre estos comandos y levanta el server.
+# La API key NO va acá: se configura como variable de entorno del servicio en la consola.
+version: 1.0
+runtime: python3
+build:
+  commands:
+    build:
+      - pip install -r requirements.txt
+      - python cargar_chroma.py   # reconstruye la base vectorial en el build
+run:
+  runtime-version: 3.12
+  command: uvicorn api:app --host 0.0.0.0 --port 8080
+  network:
+    port: 8080
+  env:
+    - name: PYTHONUNBUFFERED
+      value: "1"
