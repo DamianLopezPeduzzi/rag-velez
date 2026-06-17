@@ -23,7 +23,8 @@ load_dotenv()
 
 client = Anthropic()
 MODELO = "claude-sonnet-4-6"
-K_CHUNKS = 3  # cuántos chunks usar finalmente en el prompt
+K_CHUNKS = 4        # cuántos chunks usar finalmente en el prompt
+POOL_RERANK = 30    # cuántos candidatos traer cuando se va a re-rankear
 
 # El prompt-plantilla del Módulo 2 (+ reglas de dominio del Módulo 6):
 # obliga a responder solo con el contexto y resuelve ambigüedades por defecto.
@@ -121,10 +122,12 @@ def reformular_query(pregunta, historial=None):
 def recuperar_contexto(pregunta, k=K_CHUNKS, rerank=False):
     """Paso 1-2: embedding de la pregunta + retrieval de los k chunks más similares.
 
-    Si rerank=True, recupera el doble de chunks y los filtra con el re-ranker
-    hasta quedarse con los k mejores.
+    Si rerank=True, recupera un pool grande de candidatos (POOL_RERANK) y los
+    filtra con el re-ranker hasta quedarse con los k mejores. El pool grande es
+    clave: para preguntas tipo "cuántos títulos" el chunk correcto a veces queda
+    en posición ~15, fuera de un k chico, pero dentro del pool.
     """
-    n = k * 2 if rerank else k
+    n = POOL_RERANK if rerank else k
     resultado = coleccion.query(query_texts=[pregunta], n_results=n)
     chunks = resultado["documents"][0]
     fuentes = [m["fuente"] for m in resultado["metadatas"][0]]

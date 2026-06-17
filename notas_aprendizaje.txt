@@ -310,3 +310,37 @@ LECCIÓN:
 PROBADO:
 - SIN reformular: "No tengo información suficiente" (el palmarés no llega)
 - CON reformular + prompt nuevo: "19 títulos en fútbol profesional (14 nacionales + 5 internacionales)"
+
+=====================================================================
+MÓDULO 6g - CONFIABILIDAD DEL RETRIEVAL (el 19 que aparecía a veces sí, a veces no)
+Archivo: rag.py (POOL_RERANK, K_CHUNKS)
+=====================================================================
+
+EL SÍNTOMA:
+- La misma pregunta "cuántos títulos" a veces daba 19, a veces 10, a veces "no tengo info"
+- No es un bug de código: es que el retrieval es PROBABILÍSTICO con esta pregunta
+
+LA CAUSA (medida, no supuesta):
+- El chunk con el desglose (11 Primera + 3 nacionales + 5 internacionales = 19) tiene un embedding
+  "diluido" porque mezcla fútbol + básquet + vóley. No rankea alto
+- Su posición salta entre #1 y #18 según cómo la reformulación reescriba la query esa vez
+- Con k=3 entraba 0 de 5 veces; con k=8, 2 de 5. Pura lotería
+
+EL FIX (subir el POOL antes de re-rankear):
+- POOL_RERANK = 30: cuando rerank=True, se traen 30 candidatos (no k*2), y el re-ranker (Claude)
+  elige los K_CHUNKS mejores. Si el chunk correcto rankea ~#15, igual entra al pool de 30
+- K_CHUNKS subió de 3 a 4 (un poco más de contexto, sin costo notable)
+- Resultado: reformular=True + rerank=True -> "19" en 5 de 5 corridas (estable)
+- Por eso en el chat quedaron PRENDIDOS por default tanto reformular como re-ranking
+
+EL TRADE-OFF (importante):
+- Ahora cada pregunta del chat hace 3 llamadas al modelo: reformular + re-rankear + generar
+- Es más lento y más caro, a cambio de respuestas confiables. Para preguntas simples es overkill;
+  se puede apagar reformular/re-ranking con los checkboxes para ganar velocidad
+- La evaluación (evaluacion.py) sigue 10/10 con estos cambios (no usa reformular ni rerank: mide el RAG base)
+
+LECCIÓN DE FONDO:
+- "Cercanía de embeddings" no garantiza traer el mejor chunk: un dato clave puede estar enterrado en #15
+- La confiabilidad se compra ampliando el POOL de candidatos y dejando que el re-ranker elija
+- En sistemas reales, para hechos canónicos (totales, fechas) se suma búsqueda por palabra clave
+  (hybrid search) o datos estructurados; el retrieval semántico solo no siempre alcanza
